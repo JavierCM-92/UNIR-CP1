@@ -44,11 +44,41 @@ pipeline {
                 }
             }
         }
-        stage('Results') {
-            steps {
-                junit "result*.xml"
+        stage('Coverage')
+        {
+            steps
+            {
+                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE'){
+                     bat """
+                         SET PYTHONPATH=.
+                         python -m coverage run --branch --source=app --omit=app\\__init__.py,app\\api.py -m pytest test\\unit
+                         python -m coverage xml
+                         python -m coverage html -d coverage_html
+                        """
+                 }
+          
             }
         }
+        stage('Results') {
+            steps {
+                junit "result-unit.xml"
+                junit "result-rest.xml"
+            }
+        }
+       
         
     }
+    // Se ha instalado el plugin publish html ya que cobertura no era compatible con mi version.
+    // De esta manera, se genera el html en el paso de cogerage y lo publicamos para poder visualizarlo desde el propio job una vez ha terminado
+     post {
+            always {
+                publishHTML([
+                    reportDir: 'coverage_html',
+                    reportFiles: 'index.html',
+                    reportName: 'Coverage Report',
+                    keepAll: true,
+                    allowMissing: false
+                ])
+            }
+        }
 }
