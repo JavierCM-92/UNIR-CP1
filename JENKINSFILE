@@ -6,44 +6,55 @@ pipeline {
         stage('Get Code') {
             steps {
                 // Get some code from a GitHub repository
-                git 'https://github.com/JavierCM-92/UNIR-CP1.1.git'
+                git 'https://github.com/JavierCM-92/UNIR-CP1.git'
             }
         }
-        stage('Build') {
+        stage('Unit') {
             steps {
-                // Python can't be built
-                 echo 'Good try :)'
-                 echo WORKSPACE
-            }
-        }
-        stage ('Tests')
-        { 
-            parallel {
-                stage('Unit') {
-                    steps {
-                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE'){
-                            bat """
-                                SET PYTHONPATH=.
-                                python -m pytest --junitxml=result-unit.xml .\\test\\unit
-                            """
-                        }
-                    }
-                }
-                stage('Rest') {
-                    steps {
-                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE'){
-                            // se indica start en windows para que no bloquee la ejecucion del bat (ctrl+c)
-                            bat """
-                                SET FLASK_APP=app\\api.py
-                                start python -m flask run
-                                start java -jar C:\\repositorios\\UNIR\\wiremock-standalone-3.13.2.jar --port 9090 -root-dir .\\test\\wiremock
-                                python -m pytest --junitxml=result-rest.xml .\\test\\rest
-                            """
-                        }
-                    }
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE'){
+                    bat """
+                        SET PYTHONPATH=.
+                        python -m coverage run --branch --source=app --omit=app\\__init__.py,app\\api.py -m pytest test\\unit --junitxml=result-unit.xml .\\test\\unit
+                    """
+                    junit "result-unit.xml"
+                    junit "result-rest.xml"
                 }
             }
         }
+        stage('Rest') {
+            steps {
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE'){
+                    // se indica start en windows para que no bloquee la ejecucion del bat (ctrl+c)
+                    bat """
+                        SET FLASK_APP=app\\api.py
+                        start python -m flask run
+                        start java -jar C:\\repositorios\\UNIR\\wiremock-standalone-3.13.2.jar --port 9090 -root-dir .\\test\\wiremock
+                        python -m pytest --junitxml=result-rest.xml .\\test\\rest
+                    """
+                }
+            }
+        }
+        
+        stage('Static') {
+                steps {
+                        bat """
+                          python -m flake8 --exit-zero --format=pylint app > flake8.out
+                        """
+                        recordIssues tools:[flake8(name: 'Flake8', pattern: 'flake8.out')],
+                        qualityGates: [[integerThreshold: 8, threshold: 8.0, type: 'TOTAL', unstable: true], [integerThreshold: 10, threshold: 10.0, type: 'TOTAL', unstable:false]]
+                }
+            }
+           
+            stage('Performance') {
+                steps {
+                        bat """
+                            SET FLASK_APP=app\\api.py
+                            start python -m flask run
+                            C:\\repositorios\\UNIR\\apache-jmeter\\bin\\jmeter -n -t .\\test\\jmeter\\flask.jmx -l flask.jtl
+                        """
+                        perfReport sourceDataFiles: 'flask.jtl'
+                }
+            }
         stage('Coverage')
         {
             steps
@@ -51,35 +62,33 @@ pipeline {
                  catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE'){
                      bat """
                          SET PYTHONPATH=.
-                         python -m coverage run --branch --source=app --omit=app\\__init__.py,app\\api.py -m pytest test\\unit
                          python -m coverage xml
                          python -m coverage html -d coverage_html
                         """
                  }
-                 recordCoverage qualityGates: [[integerThreshold: 95, metric: 'LINE', threshold: 95.0], [criticality: 'ERROR', integerThreshold: 85, metric: 'LINE', threshold: 85.0],  [criticality: 'ERROR', integerThreshold: 80, metric: 'BRANCH', threshold: 80.0], [integerThreshold: 90, metric: 'BRANCH', threshold: 90.0]], tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']]
+                 recordCoverage(
+                    tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']],
+                    qualityGates: [
+                        [metric: 'LINE',   threshold: 95.0],                          // >=95 verde
+                        [metric: 'LINE',   threshold: 85.0, criticality: 'UNSTABLE'], // 85-95 unstable <85 rojo
+                        [metric: 'BRANCH', threshold: 90.0],                          // >=90 verde
+                        [metric: 'BRANCH', threshold: 80.0, criticality: 'UNSTABLE']  // 80-90 unstable <80 rojo
+                    ]
+                )
           
             }
         }
-        stage('Results') {
-            steps {
-                junit "result-unit.xml"
-                junit "result-rest.xml"
+         stage('Security Test') {
+                steps {
+                        bat """
+                          python -m bandit --exit-zero -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
+                        """
+                        recordIssues tools:[pyLint(name:'Bandit', pattern: 'bandit.out')],
+                        qualityGates: [[threshold: 1, type: 'TOTAL', unstable: true], [threshold: 2, type: 'TOTAL', unstable:false]]
+                }
             }
-        }
-       
-        
+            
+            
     }
-    // Se ha instalado el plugin publish html ya que cobertura no era compatible con mi version.
-    // De esta manera, se genera el html en el paso de coverage y lo publicamos para poder visualizarlo desde el propio job una vez ha terminado
-     post {
-            always {
-                publishHTML([
-                    reportDir: 'coverage_html',
-                    reportFiles: 'index.html',
-                    reportName: 'Coverage Report',
-                    keepAll: true,
-                    allowMissing: false
-                ])
-            }
-        }
+   
 }
