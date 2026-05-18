@@ -56,6 +56,7 @@ pipeline {
                          python -m coverage html -d coverage_html
                         """
                  }
+                 recordCoverage qualityGates: [[integerThreshold: 95, metric: 'LINE', threshold: 95.0], [criticality: 'ERROR', integerThreshold: 85, metric: 'LINE', threshold: 85.0]], tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']]
           
             }
         }
@@ -69,7 +70,7 @@ pipeline {
         
     }
     // Se ha instalado el plugin publish html ya que cobertura no era compatible con mi version.
-    // De esta manera, se genera el html en el paso de cogerage y lo publicamos para poder visualizarlo desde el propio job una vez ha terminado
+    // De esta manera, se genera el html en el paso de coverage y lo publicamos para poder visualizarlo desde el propio job una vez ha terminado
      post {
             always {
                 publishHTML([
